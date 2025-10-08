@@ -165,7 +165,7 @@ class DeliveryCarrier(models.Model):
             "destinatario_nombre": (
                 escape(consignee.name or consignee.commercial_partner_id.name or "")
             ),
-            "destinatario_direccion": escape(consignee.street or ""),
+            "destinatario_direccion": escape(f"{consignee.street or ''}{(' '+consignee.street2) if consignee.street2 else '' }"),
             "destinatario_poblacion": escape(consignee.city or ""),
             "destinatario_provincia": escape(consignee.state_id.name or ""),
             "destinatario_pais": consignee.country_id.code or "",
