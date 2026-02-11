@@ -112,6 +112,45 @@ class L10nEsAccountStatementImportN43(common.TransactionCase):
         self.assertEqual(statement_lines[1].ref, "/")
         self.assertEqual(statement_lines[0].ref, "5540014210128010")
 
+    def test_sabadell_incoming_partner_detection(self):
+        """Test that Sabadell incoming transfers detect partner from
+        'NOMBRE DEL ORDENANTE' prefix in concept 01."""
+        partner = self.env["res.partner"].create(
+            {"name": "TEST EMPRESA SL", "company_id": self.env.company.id}
+        )
+        wizard = self.env["account.statement.import"]
+        # Simulate Sabadell incoming transfer concept record:
+        # First 35 chars: "NOMBRE DEL ORDENANTE    TEST EMP"
+        # Remaining:       "RESA,S.L."
+        conceptos = {
+            "01": ("NOMBRE DEL ORDENANTE    TEST EMP", "RESA,S.L."),
+        }
+        result = wizard._get_n43_partner_from_sabadell(conceptos)
+        self.assertEqual(result, partner)
+
+    def test_sabadell_incoming_partner_no_suffix(self):
+        """Test Sabadell incoming detection for a person (no legal suffix)."""
+        partner = self.env["res.partner"].create(
+            {"name": "MARIA CARMEN SERRAT FREIXA", "company_id": self.env.company.id}
+        )
+        wizard = self.env["account.statement.import"]
+        conceptos = {
+            "01": ("NOMBRE DEL ORDENANTE    MARIA CARME", "N SERRAT FREIXA"),
+        }
+        result = wizard._get_n43_partner_from_sabadell(conceptos)
+        self.assertEqual(result, partner)
+
+    def test_clean_partner_name_suffix(self):
+        """Test legal suffix removal for partner name matching."""
+        wizard = self.env["account.statement.import"]
+        self.assertEqual(wizard._clean_partner_name_suffix("VILA FOPE,S.L."), "VILA FOPE")
+        self.assertEqual(wizard._clean_partner_name_suffix("EMPRESA S.A."), "EMPRESA")
+        self.assertEqual(wizard._clean_partner_name_suffix("CORP SLU"), "CORP")
+        self.assertEqual(
+            wizard._clean_partner_name_suffix("MARIA CARMEN SERRAT"),
+            "MARIA CARMEN SERRAT",
+        )
+
     def test_import_n43_fecha_oper(self):
         self.journal.n43_date_type = "fecha_oper"
         action = self.import_wizard.import_file_button()

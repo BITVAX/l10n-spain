@@ -3,6 +3,7 @@
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
 import logging
+import re
 from datetime import datetime
 
 from odoo import _, api, exceptions, fields, models
@@ -310,14 +311,47 @@ class AccountStatementImport(models.TransientModel):
                     partner = partner_obj.search([("name", "ilike", name)], limit=1)
         return partner
 
+    _LEGAL_SUFFIX_RE = re.compile(
+        r"[,.\s]*(S\.?L\.?U?\.?|S\.?A\.?U?\.?|S\.?C\.?|S\.?C\.?P\.?)\s*$",
+        re.IGNORECASE,
+    )
+
+    def _clean_partner_name_suffix(self, name):
+        """Remove common Spanish legal form suffixes for fuzzy matching.
+
+        Examples: "VILA FOPE,S.L." -> "VILA FOPE"
+                  "EMPRESA S.A."  -> "EMPRESA"
+        """
+        return self._LEGAL_SUFFIX_RE.sub("", name).strip()
+
     def _get_n43_partner_from_sabadell(self, conceptos):
         partner_obj = self.env["res.partner"]
         partner = partner_obj.browse()
-        # Try to match from partner name
-        if conceptos.get("01"):
-            name = conceptos["01"][1]
-            if name and len(name) > 7:
-                partner = partner_obj.search([("name", "ilike", name)], limit=1)
+        if not conceptos.get("01"):
+            return partner
+        # 1) Existing logic: try matching from second part of concept 01
+        name = conceptos["01"][1]
+        if name and len(name) > 7:
+            partner = partner_obj.search([("name", "ilike", name)], limit=1)
+        if partner:
+            return partner
+        # 2) Incoming transfer detection: concept 01 starts with
+        #    "NOMBRE DEL ORDENANTE" followed by spaces + partner name.
+        #    This is the format used by Sabadell for incoming transfers.
+        full_name = (conceptos["01"][0] + conceptos["01"][1]).strip()
+        prefix = "NOMBRE DEL ORDENANTE"
+        if full_name.upper().startswith(prefix):
+            extracted = full_name[len(prefix) :].strip()
+            if extracted:
+                # Always strip legal suffixes before searching, as the partner
+                # name in Odoo may use a different notation (e.g., "SL" vs
+                # "S.L."). Searching by the core name avoids mismatches.
+                clean = self._clean_partner_name_suffix(extracted)
+                name_to_search = clean if clean and len(clean) > 3 else extracted
+                if len(name_to_search) > 3:
+                    partner = partner_obj.search(
+                        [("name", "ilike", name_to_search)], limit=1
+                    )
         return partner
 
     def _get_n43_partner(self, line, journal):
