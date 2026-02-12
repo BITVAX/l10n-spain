@@ -335,23 +335,59 @@ class AccountStatementImport(models.TransientModel):
             partner = partner_obj.search([("name", "ilike", name)], limit=1)
         if partner:
             return partner
-        # 2) Incoming transfer detection: concept 01 starts with
-        #    "NOMBRE DEL ORDENANTE" followed by spaces + partner name.
-        #    This is the format used by Sabadell for incoming transfers.
+        # 2) Incoming transfer detection: concept 01 starts with a known
+        #    prefix followed by spaces + partner name.
+        #    Sabadell uses these formats for incoming transfers.
         full_name = (conceptos["01"][0] + conceptos["01"][1]).strip()
-        prefix = "NOMBRE DEL ORDENANTE"
-        if full_name.upper().startswith(prefix):
-            extracted = full_name[len(prefix) :].strip()
-            if extracted:
-                # Always strip legal suffixes before searching, as the partner
-                # name in Odoo may use a different notation (e.g., "SL" vs
-                # "S.L."). Searching by the core name avoids mismatches.
-                clean = self._clean_partner_name_suffix(extracted)
-                name_to_search = clean if clean and len(clean) > 3 else extracted
-                if len(name_to_search) > 3:
-                    partner = partner_obj.search(
-                        [("name", "ilike", name_to_search)], limit=1
+        prefixes = (
+            "NOMBRE DEL ORDENANTE",
+            "ORDENANTE DE LA TRANSFERENCIA",
+            "TRANSFERENC. DE",
+        )
+        extracted = ""
+        for prefix in prefixes:
+            if full_name.upper().startswith(prefix):
+                extracted = full_name[len(prefix) :].strip()
+                # Strip leading colon/spaces (ORDENANTE format uses ": name")
+                extracted = extracted.lstrip(": ").strip()
+                break
+        if extracted:
+            # Always strip legal suffixes before searching, as the partner
+            # name in Odoo may use a different notation (e.g., "SL" vs
+            # "S.L."). Searching by the core name avoids mismatches.
+            clean = self._clean_partner_name_suffix(extracted)
+            name_to_search = clean if clean and len(clean) > 3 else extracted
+            if len(name_to_search) > 3:
+                partner = partner_obj.search(
+                    [("name", "ilike", name_to_search)], limit=1
+                )
+            # Last resort: search by individual words using word boundary
+            # matching to avoid substring false positives (e.g. CARMEN
+            # matching CARMENET). Only accept if exactly one partner matches.
+            if not partner:
+                _stop = {
+                    "de", "del", "la", "las", "el", "los", "i", "y",
+                    "en", "por", "con", "para", "the", "and",
+                }
+                words = [
+                    w for w in name_to_search.split()
+                    if len(w) > 3 and w.lower() not in _stop
+                ]
+                for word in words:
+                    # Use raw SQL with PostgreSQL word boundary regex
+                    # (\m = start, \M = end of word) to avoid substring
+                    # false positives (e.g. CARMEN != CARMENET).
+                    # Odoo domains don't support the ~* operator.
+                    self.env.cr.execute(
+                        "SELECT id FROM res_partner"
+                        " WHERE name ~* %s AND active = true"
+                        " LIMIT 2",
+                        [r"\m" + word + r"\M"],
                     )
+                    rows = self.env.cr.fetchall()
+                    if len(rows) == 1:
+                        partner = partner_obj.browse(rows[0][0])
+                        break
         return partner
 
     def _get_n43_partner(self, line, journal):
