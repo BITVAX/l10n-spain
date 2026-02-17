@@ -132,7 +132,7 @@ class DeliveryCarrier(models.Model):
         if self.gls_asm_cash_on_delivery:
             cash_amount = picking.sale_id.amount_total
         return {
-            "fecha": fields.Date.today().strftime("%d/%m/%Y"),
+            "fecha": picking.scheduled_date.strftime("%d/%m/%Y"),
             "portes": self.gls_asm_postage_type,
             "servicio": self.gls_asm_service,
             "horario": self.gls_asm_shiptime,
@@ -215,7 +215,7 @@ class DeliveryCarrier(models.Model):
         if not receiving_partner.street:
             raise UserError(_("Couldn't find the consignee street"))
         return {
-            "fecha": fields.Date.today().strftime("%d/%m/%Y"),
+            "fecha": picking.scheduled_date.strftime("%d/%m/%Y"),
             "portes": self.gls_asm_postage_type,
             "servicio": self.gls_asm_service,
             "horario": self.gls_asm_shiptime,
