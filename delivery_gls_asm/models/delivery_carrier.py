@@ -514,16 +514,23 @@ class DeliveryCarrier(models.Model):
                 response and response.get("gls_sent_xml", ""), "GLS ASM Cancel Request"
             )
             self.log_xml(response or "", "GLS ASM Cancel Response")
-            if not response or response.get("_return") < 0:
+            cancellation_rejected = not response or response.get("_return") < 0
+            if cancellation_rejected:
                 msg = _("GLS Cancellation failed with reason: %s") % response.get(
                     "value", "Connection Error"
                 )
                 picking.message_post(body=msg)
-                continue
+            # Always clear local GLS refs so the picking is ready to be
+            # re-shipped. When GLS rejects the cancel (e.g. the shipment
+            # was never registered or already removed), the local refs
+            # would otherwise stay and the next gls_asm_get_label call
+            # would fetch the cached label from GLS instead of issuing
+            # a new shipment.
             picking.write(
                 {"gls_asm_public_tracking_ref": False, "gls_asm_picking_ref": False}
             )
-            self.gls_asm_tracking_state_update(picking=picking)
+            if not cancellation_rejected:
+                self.gls_asm_tracking_state_update(picking=picking)
 
     def gls_asm_rate_shipment(self, order):
         """There's no public API so another price method should be used
